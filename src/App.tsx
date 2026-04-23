@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   Mic, MicOff, Video, VideoOff, Send, MessageSquare, 
   Settings, Power, Info, Volume2, Sparkles, AlertCircle,
-  Monitor, Zap
+  Monitor, Zap, Key, X, ExternalLink
 } from "lucide-react";
 import { AudioStreamer, encodePCM16 } from "./lib/audio-utils";
 
@@ -21,6 +21,15 @@ interface ChatMessage {
   timestamp: Date;
 }
 
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
+
 export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(false);
@@ -28,6 +37,10 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<string>("Ready to connect");
   const [error, setError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [customApiKey, setCustomApiKey] = useState(() => {
+    return localStorage.getItem("GEMINI_API_KEY") || "";
+  });
 
   // Refs for audio/video processing
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -67,10 +80,20 @@ export default function App() {
       setMessages([]);
 
       // Create a fresh instance of GoogleGenAI to ensure the latest key is used
-      const currentApiKey = process.env.GEMINI_API_KEY || "";
+      let currentApiKey = customApiKey || process.env.GEMINI_API_KEY || "";
+      
+      // If we're on the platform and no key is provided, try to open the selector
+      if (!currentApiKey && window.aistudio) {
+        setStatus("Awaiting API Key Selection...");
+        await window.aistudio.openSelectKey();
+        // Assuming the key is now in the environment as per docs
+        currentApiKey = process.env.GEMINI_API_KEY || "";
+      }
+
       if (!currentApiKey || currentApiKey === "MY_GEMINI_API_KEY") {
-        setError("Gemini API Key is missing. Please add it to your secrets.");
+        setError("Gemini API Key is missing. Please click the gear icon to add one or check your secrets.");
         setStatus("Error");
+        setShowSettings(true);
         return;
       }
       
@@ -306,11 +329,84 @@ export default function App() {
               <Power className="w-4 h-4" />
               {isConnected ? 'Disconnect' : 'Connect'}
             </button>
-            <button className="p-2 text-zinc-400 hover:text-white transition-colors">
+            <button 
+              onClick={() => setShowSettings(!showSettings)}
+              className={`p-2 transition-colors ${showSettings ? 'text-white bg-zinc-800 rounded-lg' : 'text-zinc-400 hover:text-white'}`}
+            >
               <Settings className="w-5 h-5" />
             </button>
           </div>
         </header>
+
+        {/* API Key Modal / Settings */}
+        <AnimatePresence>
+          {showSettings && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            >
+              <div className="bg-zinc-900 border border-white/10 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+                <div className="p-6 border-b border-white/5 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <Key className="w-5 h-5 text-blue-500" />
+                    Settings
+                  </h3>
+                  <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-white transition-colors">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="p-6 space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-2">Gemini API Key</label>
+                    <div className="relative">
+                      <input 
+                        type="password"
+                        value={customApiKey}
+                        onChange={(e) => {
+                          setCustomApiKey(e.target.value);
+                          localStorage.setItem("GEMINI_API_KEY", e.target.value);
+                        }}
+                        placeholder="Paste your API key here..."
+                        className="w-full bg-zinc-950 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-500/50 transition-colors"
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-zinc-500">
+                      Keys are stored locally in your browser. Get one at 
+                      <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline inline-flex items-center gap-1 ml-1">
+                        AI Studio <ExternalLink className="w-2 h-2" />
+                      </a>
+                    </p>
+                  </div>
+
+                  {window.aistudio && (
+                    <div className="p-4 bg-blue-500/10 rounded-2xl border border-blue-500/20">
+                      <p className="text-xs text-blue-300 leading-relaxed">
+                        Detecting AI Studio Environment. You can also use the platform secret manager.
+                      </p>
+                      <button 
+                        onClick={() => window.aistudio?.openSelectKey()}
+                        className="mt-3 text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-colors font-medium"
+                      >
+                        Select Platform Key
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="pt-2">
+                    <button 
+                      onClick={() => setShowSettings(false)}
+                      className="w-full bg-white text-black font-semibold py-3 rounded-xl hover:bg-zinc-200 transition-colors"
+                    >
+                      Save & Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Grid Layout */}
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0 overflow-hidden mb-6">
