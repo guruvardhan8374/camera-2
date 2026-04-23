@@ -99,7 +99,7 @@ export default function App() {
       audioStreamerRef.current = new AudioStreamer();
 
       const promise = genAI.live.connect({
-        model: "gemini-3.1-flash-live-preview",
+        model: "gemini-2.0-flash-exp",
         callbacks: {
           onopen: () => {
             setIsConnected(true);
@@ -163,7 +163,7 @@ export default function App() {
           }
         },
         config: {
-          responseModalities: [Modality.AUDIO],
+          responseModalities: [Modality.AUDIO, Modality.TEXT],
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
           },
@@ -245,6 +245,9 @@ export default function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().catch(e => console.error("Video Play Error:", e));
+        };
       }
       
       // Store stream so we can stop it later
