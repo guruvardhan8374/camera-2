@@ -88,7 +88,7 @@ export default function App() {
             // Send an initial nudge to get the model talking
             promise.then(session => {
               session.sendRealtimeInput({ 
-                text: "Hello Gemini! You are now connected to my live camera and microphone. Please describe what you see and interact with me naturally." 
+                text: "Hello Gemini! I want you to dictate the objects and people I show you. Start narrating and identifying everything you see in my camera feed right now." 
               });
             });
           },
@@ -148,7 +148,7 @@ export default function App() {
           },
           systemInstruction: {
             parts: [{
-              text: "You are a proactive visual assistant. Your primary goal is to observe the video stream and describe objects, people, and scenes you see immediately and naturally. Do not wait for the user to ask questions; offer insights and descriptions of the visual environment in real-time. Keep your descriptions vivid but concise. You are helpful, observant, and engaging."
+              text: "You are a specialized visual narration assistant. Your main job is to identify and DICTATE (speak out) exactly what objects and human beings you see in the video stream. Whenever a user shows an object or whenever a human appears, instantly name them and describe their actions or features concisely. Be proactive: if you see a person, say 'I see a person...'. If you see a phone, say 'That looks like a smartphone'. Focus heavily on real-time identification of items and people. Keep your narration brief, natural, and continuous as the visual scene changes."
             }]
           },
           inputAudioTranscription: {},
