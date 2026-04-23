@@ -1,0 +1,11 @@
+{
+  "name": "Gemini Live Console",
+  "description": "A real-time multimodal console for interacting with Gemini using voice, video, and text.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "multimodal-live-api"
+  ]
+}
