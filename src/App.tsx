@@ -64,54 +64,79 @@ export default function App() {
     try {
       setStatus("Connecting...");
       setError(null);
+      setMessages([]);
 
+      // Create a fresh instance of GoogleGenAI to ensure the latest key is used
+      const currentApiKey = process.env.GEMINI_API_KEY || "";
+      if (!currentApiKey || currentApiKey === "MY_GEMINI_API_KEY") {
+        setError("Gemini API Key is missing. Please add it to your secrets.");
+        setStatus("Error");
+        return;
+      }
+      
+      const genAI = new GoogleGenAI({ apiKey: currentApiKey });
       audioStreamerRef.current = new AudioStreamer();
 
-      const promise = ai.live.connect({
+      const promise = genAI.live.connect({
         model: "gemini-3.1-flash-live-preview",
         callbacks: {
           onopen: () => {
             setIsConnected(true);
             setStatus("Connected");
-            console.log("Live API connection opened");
+            console.log("Live API: Connection established");
+            
+            // Send an initial nudge to get the model talking
+            promise.then(session => {
+              session.sendRealtimeInput({ 
+                text: "Hello Gemini! You are now connected to my live camera and microphone. Please describe what you see and interact with me naturally." 
+              });
+            });
           },
           onmessage: async (message) => {
-            // Handle audio output
-            const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64Audio && audioStreamerRef.current) {
-              audioStreamerRef.current.addChunk(base64Audio);
+            console.log("Live API Message:", message);
+
+            // Handle model output (Audio & Text)
+            if (message.serverContent?.modelTurn) {
+              const parts = message.serverContent.modelTurn.parts;
+              if (parts) {
+                parts.forEach(part => {
+                  if (part.inlineData?.data && audioStreamerRef.current) {
+                    audioStreamerRef.current.addChunk(part.inlineData.data);
+                  }
+                  if (part.text) {
+                    setMessages(prev => [
+                      ...prev, 
+                      { id: Date.now().toString() + Math.random(), role: "model", text: part.text!, timestamp: new Date() }
+                    ]);
+                  }
+                });
+              }
             }
 
-            // Handle transcription
-            const text = message.serverContent?.modelTurn?.parts?.[0]?.text;
-            if (text) {
-              setMessages(prev => [
-                ...prev, 
-                { id: Date.now().toString(), role: "model", text, timestamp: new Date() }
-              ]);
-            }
-            
-            // Handle user input transcription (if enabled)
-            const inputTranscript = message.serverContent?.userTurn?.parts?.[0]?.text;
-            if (inputTranscript) {
-              setMessages(prev => [
-                ...prev, 
-                { id: Date.now().toString() + "-user", role: "user", text: inputTranscript, timestamp: new Date() }
-              ]);
+            // Handle user transcription
+            if (message.serverContent?.userTurn) {
+              const parts = message.serverContent.userTurn.parts;
+              if (parts?.[0]?.text) {
+                setMessages(prev => [
+                  ...prev, 
+                  { id: Date.now().toString() + "-user", role: "user", text: parts[0].text!, timestamp: new Date() }
+                ]);
+              }
             }
 
-            // Handle interruption
+            // Handle interruptions
             if (message.serverContent?.interrupted) {
-              console.log("Model interrupted");
-              // In a real app we might want to clear the audio queue here
+              console.warn("Live API: Model interrupted");
             }
           },
           onerror: (err) => {
-            console.error("Live API Error:", err);
-            setError("Connection error. Please check your API key.");
+            console.error("Live API Session Error:", err);
+            setError(`Connection Error: ${err.message || 'Unknown error'}`);
             setIsConnected(false);
+            setStatus("Error");
           },
-          onclose: () => {
+          onclose: (closeEvent) => {
+            console.log("Live API: Connection closed", closeEvent);
             setIsConnected(false);
             setStatus("Ready to connect");
           }
@@ -121,9 +146,12 @@ export default function App() {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
           },
-          systemInstruction: "You are a helpful, conversational multimodal assistant. You can see through my camera and hear my voice. Keep responses concise and natural.",
+          systemInstruction: {
+            parts: [{
+              text: "You are a proactive visual assistant. Your primary goal is to observe the video stream and describe objects, people, and scenes you see immediately and naturally. Do not wait for the user to ask questions; offer insights and descriptions of the visual environment in real-time. Keep your descriptions vivid but concise. You are helpful, observant, and engaging."
+            }]
+          },
           inputAudioTranscription: {},
-          outputAudioTranscription: {},
         },
       });
 
@@ -152,15 +180,15 @@ export default function App() {
       mediaStreamRef.current = stream;
       
       const audioContext = new AudioContext({ sampleRate: 16000 });
+      await audioContext.resume();
       audioContextRef.current = audioContext;
       const source = audioContext.createMediaStreamSource(stream);
       
-      // Using ScriptProcessor for simplicity in this demo, though AudioWorklet is preferred
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       processorNodeRef.current = processor;
 
       processor.onaudioprocess = (e) => {
-        if (!sessionPromise) return;
+        if (!sessionPromise || !isMicOn) return;
         
         const inputData = e.inputBuffer.getChannelData(0);
         const pcmBuffer = encodePCM16(inputData);
@@ -170,14 +198,16 @@ export default function App() {
           session.sendRealtimeInput({
             audio: { data: base64Data, mimeType: "audio/pcm;rate=16000" }
           });
-        });
+        }).catch(err => console.error("Mic Send Error:", err));
       };
 
       source.connect(processor);
       processor.connect(audioContext.destination);
       setIsMicOn(true);
+      setError(null);
     } catch (err) {
-      setError("Could not access microphone");
+      console.error("Microphone Error:", err);
+      setError("Could not access microphone. Please check permissions.");
     }
   };
 
@@ -214,25 +244,27 @@ export default function App() {
     let interval: number;
     if (isVideoOn && isConnected && sessionPromise) {
       interval = window.setInterval(() => {
-        if (!videoRef.current || !canvasRef.current) return;
+        if (!videoRef.current || !canvasRef.current || videoRef.current.paused || videoRef.current.ended) return;
         
         const canvas = canvasRef.current;
         const video = videoRef.current;
-        canvas.width = 300; // Smaller resolution for faster streaming
-        canvas.height = (video.videoHeight / video.videoWidth) * canvas.width;
+        
+        // Use a consistent small resolution for faster cloud processing
+        canvas.width = 320; 
+        canvas.height = 240; 
         
         const ctx = canvas.getContext("2d");
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const base64Data = canvas.toDataURL("image/jpeg", 0.6).split(",")[1];
+          const base64Data = canvas.toDataURL("image/jpeg", 0.5).split(",")[1];
           
           sessionPromise.then(session => {
             session.sendRealtimeInput({
               video: { data: base64Data, mimeType: "image/jpeg" }
             });
-          });
+          }).catch(err => console.error("Video Send Error:", err));
         }
-      }, 1000); 
+      }, 750); // Faster interval for more active dictation
     }
     return () => clearInterval(interval);
   }, [isVideoOn, isConnected, sessionPromise]);
