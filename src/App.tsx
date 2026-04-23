@@ -51,8 +51,6 @@ export default function App() {
   const sessionRef = useRef<any>(null); // Live API session
   const canvasRef = useRef<HTMLCanvasElement | null>(document.createElement("canvas"));
 
-  const [ai] = useState(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" }));
-
   // --- Handlers ---
 
   // Add this state to track the session promise
@@ -418,6 +416,11 @@ export default function App() {
             <div className="flex-1 relative bg-zinc-900/40 rounded-3xl border border-white/5 overflow-hidden flex flex-col">
               {/* Media View */}
               <div className="flex-1 relative flex items-center justify-center p-8">
+                <div className="absolute top-6 left-6 flex items-center gap-2 px-3 py-1.5 bg-black/40 backdrop-blur-md rounded-full border border-white/10 z-20">
+                  <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-300">Live Feed</span>
+                </div>
+
                 {isVideoOn ? (
                   <video 
                     ref={videoRef}

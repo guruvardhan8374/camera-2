@@ -32,20 +32,31 @@ export class AudioStreamer {
     this.audioContext = new AudioContext({ sampleRate: this.sampleRate });
   }
 
+  private async ensureAudioContext() {
+    if (this.audioContext.state === 'suspended') {
+      await this.audioContext.resume();
+    }
+  }
+
   async addChunk(base64Data: string) {
-    const buffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0)).buffer;
-    const float32Data = decodePCM16(buffer);
-    
-    const audioBuffer = this.audioContext.createBuffer(1, float32Data.length, this.sampleRate);
-    audioBuffer.getChannelData(0).set(float32Data);
-    
-    const source = this.audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.audioContext.destination);
-    
-    const startTime = Math.max(this.audioContext.currentTime, this.nextStartTime);
-    source.start(startTime);
-    this.nextStartTime = startTime + audioBuffer.duration;
+    try {
+      await this.ensureAudioContext();
+      const buffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0)).buffer;
+      const float32Data = decodePCM16(buffer);
+      
+      const audioBuffer = this.audioContext.createBuffer(1, float32Data.length, this.sampleRate);
+      audioBuffer.getChannelData(0).set(float32Data);
+      
+      const source = this.audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.audioContext.destination);
+      
+      const startTime = Math.max(this.audioContext.currentTime, this.nextStartTime);
+      source.start(startTime);
+      this.nextStartTime = startTime + audioBuffer.duration;
+    } catch (e) {
+      console.error("AudioStreamer Error:", e);
+    }
   }
 
   stop() {
