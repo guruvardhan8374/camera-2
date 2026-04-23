@@ -95,24 +95,27 @@ export default function App() {
         return;
       }
       
-      const genAI = new GoogleGenAI({ apiKey: currentApiKey });
+      const genAI = new GoogleGenAI({ 
+        apiKey: currentApiKey,
+        apiVersion: "v1beta"
+      });
       audioStreamerRef.current = new AudioStreamer();
 
       const promise = genAI.live.connect({
         model: "gemini-2.0-flash-exp",
         callbacks: {
           onopen: () => {
-            setIsConnected(true);
-            setStatus("Connected");
-            console.log("Live API: Connection established");
-            
-            // Send an initial nudge to get the model talking
-            promise.then(session => {
-              session.sendRealtimeInput({ 
-                text: "Hello Gemini! I want you to dictate the objects and people I show you. Start narrating and identifying everything you see in my camera feed right now." 
-              });
-            });
-          },
+             setIsConnected(true);
+             setStatus("Connected");
+             console.log("Live API: Connection established");
+             
+             // Send an initial nudge to get the model talking
+             promise.then(session => {
+               session.sendRealtimeInput({ 
+                 text: "Hello! I am ready. I will show you objects and people. Please dictate exactly what you see as soon as you see it. Be proactive and specific." 
+               });
+             });
+           },
           onmessage: async (message) => {
             console.log("Live API Message:", message);
 
@@ -124,11 +127,18 @@ export default function App() {
                   if (part.inlineData?.data && audioStreamerRef.current) {
                     audioStreamerRef.current.addChunk(part.inlineData.data);
                   }
-                  if (part.text) {
-                    setMessages(prev => [
-                      ...prev, 
-                      { id: Date.now().toString() + Math.random(), role: "model", text: part.text!, timestamp: new Date() }
-                    ]);
+                  if (part.text && part.text.trim()) {
+                    setMessages(prev => {
+                      // Prevent duplicate identical messages from the stream
+                      const lastMsg = prev[prev.length - 1];
+                      if (lastMsg && lastMsg.role === 'model' && lastMsg.text === part.text) {
+                        return prev;
+                      }
+                      return [
+                        ...prev, 
+                        { id: Date.now().toString() + Math.random(), role: "model", text: part.text!, timestamp: new Date() }
+                      ];
+                    });
                   }
                 });
               }
