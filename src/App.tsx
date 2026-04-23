@@ -95,99 +95,92 @@ export default function App() {
         return;
       }
       
+      console.log("Initializing GenAI with v1beta and Key:", currentApiKey.substring(0, 5) + "...");
       const genAI = new GoogleGenAI({ 
         apiKey: currentApiKey,
         apiVersion: "v1beta"
       });
       audioStreamerRef.current = new AudioStreamer();
 
-      const promise = genAI.live.connect({
-        model: "gemini-2.0-flash-exp",
-        callbacks: {
-          onopen: () => {
-             setIsConnected(true);
-             setStatus("Connected");
-             console.log("Live API: Connection established");
-             
-             // Send an initial nudge to get the model talking
-             promise.then(session => {
-               session.sendRealtimeInput({ 
-                 text: "Hello! I am ready. I will show you objects and people. Please dictate exactly what you see as soon as you see it. Be proactive and specific." 
-               });
-             });
-           },
-          onmessage: async (message) => {
-            console.log("Live API Message:", message);
-
-            // Handle model output (Audio & Text)
-            if (message.serverContent?.modelTurn) {
-              const parts = message.serverContent.modelTurn.parts;
-              if (parts) {
-                parts.forEach(part => {
+      // Attempt to connect with Gemini 2.0 first
+      const connectWithModel = async (modelName: string) => {
+        const promise = genAI.live.connect({
+          model: modelName,
+          callbacks: {
+            onopen: () => {
+              setIsConnected(true);
+              setStatus(`Connected (${modelName.includes('2.0') ? '2.0' : '1.5'})`);
+              console.log(`Live API: Connection established with ${modelName}`);
+              
+              // Immediate dictation request using the promise
+              promise.then(session => {
+                session.sendRealtimeInput({ 
+                  text: "Hello! I am ready to identify objects. Please dictate the names of everything I show you in my camera feed right now. Be proactive and loud." 
+                });
+              });
+            },
+            onmessage: async (message) => {
+              console.log("Live API Data:", message);
+              if (message.serverContent?.modelTurn?.parts) {
+                message.serverContent.modelTurn.parts.forEach(part => {
                   if (part.inlineData?.data && audioStreamerRef.current) {
                     audioStreamerRef.current.addChunk(part.inlineData.data);
                   }
-                  if (part.text && part.text.trim()) {
-                    setMessages(prev => {
-                      // Prevent duplicate identical messages from the stream
-                      const lastMsg = prev[prev.length - 1];
-                      if (lastMsg && lastMsg.role === 'model' && lastMsg.text === part.text) {
-                        return prev;
-                      }
-                      return [
-                        ...prev, 
-                        { id: Date.now().toString() + Math.random(), role: "model", text: part.text!, timestamp: new Date() }
-                      ];
-                    });
+                  if (part.text?.trim()) {
+                    setMessages(prev => [
+                      ...prev, 
+                      { id: "model-" + Date.now() + Math.random(), role: "model", text: part.text!, timestamp: new Date() }
+                    ]);
                   }
                 });
               }
-            }
-
-            // Handle user transcription
-            if (message.serverContent?.userTurn) {
-              const parts = message.serverContent.userTurn.parts;
-              if (parts?.[0]?.text) {
+              // Restore User Transcription
+              if (message.serverContent?.userTurn?.parts?.[0]?.text) {
                 setMessages(prev => [
                   ...prev, 
-                  { id: Date.now().toString() + "-user", role: "user", text: parts[0].text!, timestamp: new Date() }
+                  { id: "user-" + Date.now(), role: "user", text: message.serverContent!.userTurn!.parts![0].text!, timestamp: new Date() }
                 ]);
               }
-            }
-
-            // Handle interruptions
-            if (message.serverContent?.interrupted) {
-              console.warn("Live API: Model interrupted");
+            },
+            onerror: async (err) => {
+              console.error(`Live API Error (${modelName}):`, err);
+              if (modelName.includes('2.0') && (err.message?.includes("not found") || err.message?.includes("not supported"))) {
+                setStatus("2.0 unavailable. Trying 1.5...");
+                handleConnectWithModel("models/gemini-1.5-flash");
+                return;
+              }
+              setError(`Connection error: ${err.message}`);
+              setIsConnected(false);
+              setStatus("Error");
+            },
+            onclose: () => {
+              setIsConnected(false);
+              setStatus("Disconnected");
             }
           },
-          onerror: (err) => {
-            console.error("Live API Session Error:", err);
-            setError(`Connection Error: ${err.message || 'Unknown error'}`);
-            setIsConnected(false);
-            setStatus("Error");
-          },
-          onclose: (closeEvent) => {
-            console.log("Live API: Connection closed", closeEvent);
-            setIsConnected(false);
-            setStatus("Ready to connect");
+          config: {
+            responseModalities: [Modality.AUDIO, Modality.TEXT],
+            systemInstruction: {
+              parts: [{
+                text: "You are a visual assistant. Identify every object and person you see in the stream immediately. Speak their names naturally."
+              }]
+            }
           }
-        },
-        config: {
-          responseModalities: [Modality.AUDIO, Modality.TEXT],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
-          },
-          systemInstruction: {
-            parts: [{
-              text: "You are a specialized visual narration assistant. Your main job is to identify and DICTATE (speak out) exactly what objects and human beings you see in the video stream. Whenever a user shows an object or whenever a human appears, instantly name them and describe their actions or features concisely. Be proactive: if you see a person, say 'I see a person...'. If you see a phone, say 'That looks like a smartphone'. Focus heavily on real-time identification of items and people. Keep your narration brief, natural, and continuous as the visual scene changes."
-            }]
-          },
-          inputAudioTranscription: {},
-        },
-      });
+        });
+        return promise;
+      };
 
-      setSessionPromise(promise);
-      sessionRef.current = await promise;
+      const handleConnectWithModel = async (m: string) => {
+        try {
+          const promise = connectWithModel(m);
+          setSessionPromise(promise);
+          sessionRef.current = await promise;
+        } catch (e: any) {
+          setError(e.message);
+        }
+      };
+
+      await handleConnectWithModel("models/gemini-2.0-flash-exp");
     } catch (err: any) {
       setError(err.message || "Failed to connect to Gemini");
       setStatus("Error");
@@ -255,9 +248,19 @@ export default function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(e => console.error("Video Play Error:", e));
+        const playVideo = async () => {
+          try {
+            if (videoRef.current) {
+              await videoRef.current.play();
+              console.log("Video playback started");
+            }
+          } catch (e) {
+            console.error("Video Play Error:", e);
+          }
         };
+        videoRef.current.onloadedmetadata = playVideo;
+        // Immediate attempt as well
+        playVideo();
       }
       
       // Store stream so we can stop it later
@@ -580,7 +583,7 @@ export default function App() {
         {/* Footer */}
         <footer className="py-6 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-[0.2em]">
-            Powered by Gemini 1.5 Flash Live
+            Powered by Gemini • v1.0.5 - FINAL_FIX
           </p>
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2 text-xs text-zinc-400">
